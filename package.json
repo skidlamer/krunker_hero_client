@@ -1,0 +1,27 @@
+{
+  "name": "krunker.hero.desktop",
+  "version": "0.0.1",
+  "description": "A Thrid Party Desktop Client For Krunker",
+  "author": "SkidLamer",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-webpack dev",
+    "compile": "electron-webpack",
+    "dist": "yarn compile && electron-builder",
+    "dist:dir": "yarn dist --dir -c.compression=store -c.mac.identity=null"
+  },
+  "dependencies": {
+    "electron-notify": "^0.1.0",
+    "got": "^9.6.0",
+    "request": "^2.88.0",
+    "source-map-support": "^0.5.12"
+  },
+  "devDependencies": {
+    "electron": "5.0.6",
+    "electron-builder": "^21.0.11",
+    "electron-webpack": "^2.7.4",
+    "electron-store": "^5.0.0",
+    "electron-localshortcut": "^3.1.0",
+    "webpack": "~4.35.3"
+  }
+}

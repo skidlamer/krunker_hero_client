@@ -1,0 +1,359 @@
+'use strict'
+// includes
+import { app, BrowserWindow, session, screen, Menu, dialog} from 'electron';
+import * as os from 'os'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as url from 'url'
+import * as got from 'got'
+import * as request from 'request'
+import * as store from 'electron-store'
+import * as shortcut from 'electron-localshortcut'
+import { format as formatUrl } from 'url'
+
+// global references
+var settings = [];
+const config = new store();
+const gameScripts = new Map();
+let mainWindow = null, swapFolder = '';
+const isDev = process.env.NODE_ENV !== 'production'
+const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36';
+const noCache = { userAgent: userAgent, "extraHeaders": "pragma: no-cache\n" };
+const cStruct = (...keys) => ((...a) => keys.reduce((x, y, z) => { x[y] = a[z]; return x }, {}))
+const script_t = cStruct('file', 'pattern', 'url', 'redirect');
+
+// command line switches
+function initCmdSwitches() {
+  if (config.get('unlimitedFrames', true)) {
+      if (Boolean(os.cpus().filter(x => /amd/i.test(x.model)).length)) {
+          app.commandLine.appendSwitch('disable-zero-copy');
+          app.commandLine.appendSwitch('ui-disable-partial-swap');
+      }
+      app.commandLine.appendSwitch('disable-gpu-vsync');
+      //app.commandLine.appendSwitch('disable-frame-rate-limit');
+  }
+  app.commandLine.appendSwitch("disable-http-cache");
+  app.commandLine.appendSwitch('ignore-gpu-blacklist', true);
+  app.commandLine.appendSwitch('enable-webgl2-compute-context');
+  if (config.get('d3d9Mode', false)) {
+      app.commandLine.appendSwitch('use-angle', 'd3d9');
+      app.commandLine.appendSwitch('use-cmd-decoder=passthrough');
+      app.commandLine.appendSwitch('renderer-process-limit', 100);
+      app.commandLine.appendSwitch('max-active-webgl-contexts', 100);
+  }
+}; initCmdSwitches(); // excecuted ASAP (before app ready)
+
+// app menu layout
+function initAppMenu () {
+  console.log('process.platform', process.platform)
+  if (process.platform == 'win32') {
+    const template = [{
+      label: "File",
+        submenu:[ 
+          { label: "Save game.js", click: _ =>  downloadFile(gameScripts.get('game').url) },
+          { label: "Save zip.js", click: _ =>  downloadFile(gameScripts.get('zip').url) },
+          { label: "Save zip-ext.js", click: _ =>  downloadFile(gameScripts.get('zip-ext').url) },
+          { type: "separator" },
+          { label: "Quit", accelerator: "Alt+F4", click: _ => app.quit()}
+        ]}, {
+      label: "Edit",
+        submenu: [
+          { label: "Undo", accelerator: "CmdOrCtrl+Z", selector: "undo:" },
+          { label: "Redo", accelerator: "Shift+CmdOrCtrl+Z", selector: "redo:" },
+          { type: "separator" },
+          { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
+          { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
+          { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
+          { label: "Select All", accelerator: "CmdOrCtrl+A", selector: "selectAll:" }
+        ]}
+    ];
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  }
+}
+
+// create main BrowserWindow
+function createMainWindow() {
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea;
+  mainWindow = new BrowserWindow({
+      width: area.width,
+      height: area.height,
+      frame: true,
+      autoHideMenuBar: true, //menu bar
+      toolbar: false, //title bar
+      show: false,
+      webPreferences: {
+          nodeIntegration: true,
+          webSecurity: false
+      }
+  })
+
+  mainWindow.loadURL('https://krunker.io');
+
+  mainWindow.once('ready-to-show', () => {
+      if (isDev) mainWindow.webContents.openDevTools({
+          mode: 'undocked'
+      });
+      if (config.get('fullscreen', false) && !mainWindow.isFullScreen()) mainWindow.setFullScreen(true);
+      else mainWindow.maximize();
+      mainWindow.show();
+  });
+
+  mainWindow.webContents.on('devtools-opened', () => {
+      mainWindow.focus()
+      setImmediate(() => {
+          mainWindow.focus()
+      })
+  })
+
+  mainWindow.once('closed', () => {
+      mainWindow = null;
+  });
+}
+
+function initShortcuts() {
+  const KEY_BINDS = {
+      escape: {
+          key: 'Esc',
+          press: _ => mainWindow.webContents.send('test','This is a test')//mainWindow.webContents.send('esc')
+      },
+      quit: {
+          key: 'Alt+F4',
+          press: _ => app.quit()
+      },
+      refresh: {
+          key: 'F5',
+          press: _ => mainWindow.webContents.reloadIgnoringCache()
+      },
+      fullscreen: {
+          key: 'F11',
+          press: _ => {
+              let full = !mainWindow.isFullScreen();
+              mainWindow.setFullScreen(full);
+              config.set("fullscreen", full);
+          }
+      },
+      menuBar: {
+          key: 'Alt',
+          press: _ => {
+              let value = !mainWindow.isMenuBarVisible();
+              mainWindow.webContents.send('nav-request')
+              mainWindow.setMenuBarVisibility(value);
+          }
+      },
+      menu: {
+          key: 'Ctrl+Tab',
+          press: _ => mainWindow.webContents.send('nav-request')
+      },
+      clearConfig: {
+          key: 'Ctrl+F1',
+          press: _ => {
+              config.store = {};
+              app.relaunch();
+              app.quit();
+          }
+      },
+      openConfig: {
+          key: 'Shift+F1',
+          press: _ => config.openInEditor(),
+      },
+      openDevTools: {
+          key: 'F12',
+          press: _ => mainWindow.webContents.openDevTools({
+              mode: 'undocked'
+          }),
+      },
+  }
+  Object.keys(KEY_BINDS).forEach(k => {
+      shortcut.register(mainWindow, KEY_BINDS[k].key, () => KEY_BINDS[k].press());
+  });
+}
+
+// quit application when all windows are closed
+app.on('window-all-closed', () => {
+  // on macOS it is common for applications to stay open until the user explicitly quits
+  if (process.platform !== 'darwin') {
+      app.quit()
+  }
+})
+
+app.on('activate', () => {
+  // on macOS it is common to re-create a window even after all windows have been closed
+  if (mainWindow === null) {
+      createMainWindow();
+  }
+})
+
+// wait fo electron to become ready
+app.on('ready', () => {
+  (async () => { // async initialization
+    try {
+        //Swap Folder
+        swapFolder = path.join(app.getPath('documents'), '/KrunkerResourceSwapper');
+        try {
+            fs.mkdir(swapFolder, {
+                recursive: true
+            }, e => {});
+        } catch (e) {};
+        let swap = {
+            filter: {
+                urls: []
+            },
+            files: {}
+        };
+        const allFilesSync = (dir, fileList = []) => {
+            fs.readdirSync(dir).forEach(file => {
+                const filePath = path.join(dir, file);
+                if (fs.statSync(filePath).isDirectory()) {
+                    allFilesSync(filePath);
+                } else {
+                    if (!file.includes('.js')) {
+                        let krunk = '*://krunker.io' + filePath.replace(swapFolder, '').replace(/\\/g, '/') + '*';
+                        swap.filter.urls.push(krunk);
+                        swap.files[krunk.replace(/\*/g, '')] = url.format({
+                            pathname: filePath,
+                            protocol: 'file:',
+                            slashes: true
+                        });
+                    }
+                }
+            });
+        };
+        allFilesSync(swapFolder);
+        if (swap.filter.urls.length) {
+            session.defaultSession.webRequest.onBeforeRequest(swap.filter, (details, callback) => {
+                callback({
+                    cancel: false,
+                    redirectURL: swap.files[details.url.replace(/https|http|(\?.*)|(#.*)/gi, '')] || details.url
+                });
+            });
+            await wait(200);
+        }
+        const response = await got('https://krunker.io/');
+        const build = response.body.match(/(?<=build=)[^"]+/)[0];
+        gameScripts.set('game', script_t('game.js', 'https://krunker.io/js/game*', `https://krunker.io/js/game.${build}.js`, ''));
+        //gameScripts.set('zip', script_t('zip.js', 'https://krunker.io/libs/zip.*', 'https://krunker.io/libs/zip.js', ''));
+        //gameScripts.set('zip-ext', script_t('zip-ext.js', 'https://krunker.io/libs/zip-ext*', 'https://krunker.io/libs/zip-ext.js', ''));
+
+        for (const [name, obj] of gameScripts) {
+            const fullPath = path.join(swapFolder, obj.file);
+            try {
+                  if (fs.existsSync(fullPath)) {
+                  //file exists
+                  redirectScript(obj.pattern, fullPath);
+                  }
+            } catch(err) {
+                  console.error(err)
+            }
+
+
+            //fs.access(fullPath, (err) => {
+            //    if (err == null) {
+                 //   redirectScript(obj.pattern, fullPath);
+               // }
+          //  });
+        }
+        //Spoof user agent to regualar chrome
+        session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+            details.requestHeaders['User-Agent'] = noCache;
+            callback({
+                cancel: false,
+                requestHeaders: details.requestHeaders
+            });
+        });
+        Promise.resolve(true);
+    } catch (error) {
+        console.log(error.response.body);
+    }
+  })();
+  initAppMenu();
+  createMainWindow();
+  initShortcuts();
+})
+
+/*##############################################################################*/
+// Various Helper Functions. - maybe put these in their own file later (skid)
+
+async function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function webRequest(configuration) {
+  return new Promise(function(resolve, reject) {
+      // Save variable to know progress
+      var received_bytes = 0;
+      var total_bytes = 0;
+
+      var req = request({
+          method: 'GET',
+          uri: configuration.remoteFile
+      });
+
+      var out = fs.createWriteStream(configuration.localFile);
+      req.pipe(out);
+
+      req.on('response', function(data) {
+          // Change the total bytes value to get progress later.
+          total_bytes = parseInt(data.headers['content-length']);
+      });
+
+      // Get progress if callback exists
+      if (configuration.hasOwnProperty("onProgress")) {
+          req.on('data', function(chunk) {
+              // Update the received bytes
+              received_bytes += chunk.length;
+
+              configuration.onProgress(received_bytes, total_bytes);
+          });
+      } else {
+          req.on('data', function(chunk) {
+              // Update the received bytes
+              received_bytes += chunk.length;
+          });
+      }
+
+      req.on('end', function() {
+          return resolve();
+      });
+  });
+}
+
+function downloadFile(source) 
+{
+  const filename = source.substring(source.lastIndexOf('/') +1 );
+  const options = { defaultPath: swapFolder + `/${filename}` }
+  dialog.showSaveDialog(null, options, dir => {
+    webRequest({remoteFile: source, localFile: dir, onProgress: function (received, total){ let percent = (received * 100) / total; console.log(percent + "% | " + received + " bytes out of " + total + " bytes.");} }).then(function(){ dialog.showMessageBox(null, {type: 'question',buttons: ['Ok'],message: 'Download Successful'});});
+  });
+}
+
+function redirectScript(pattern, redirect) {
+  session.defaultSession.webRequest.onBeforeRequest({
+      urls: [pattern], 
+  }, (details, callback) => {
+      callback({
+          cancel: false,
+          redirectURL: redirect
+      });
+      console.log('onBeforeRequest details', details);
+      const url = details.url.substring(0, details.url.lastIndexOf('.js') + 3) || details.url;
+      console.log('Redirecting ', url, 'to', redirect);
+  })
+  session.defaultSession.webRequest.onErrorOccurred((details) => {
+    console.log("error occurred on request");
+    console.log(details);
+    })
+}
+
+function setSetting(t, e) {
+  this.settings[t].val = e;
+  config.set(`client_${t}`, e);
+  if (this.settings[t].set) this.settings[t].set(e);
+}
+
+function resetSettings() {
+  if (confirm("Are you sure you want to reset all your client settings? This will also refresh the page")) {
+      Object.keys(config.store).filter(x=>x.includes("client_")).forEach(x => config.remove(x));
+      location.reload();
+  }
+}
