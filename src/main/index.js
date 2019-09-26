@@ -1,6 +1,6 @@
 'use strict'
 // includes
-import { app, BrowserWindow, session, screen, Menu, dialog } from 'electron';
+import { app, BrowserWindow, session, screen, Menu, dialog, ipcMain } from 'electron';
 import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -44,40 +44,128 @@ function initCmdSwitches() {
 }; initCmdSwitches(); // excecuted ASAP (before app ready)
 
 // app menu layout
-function initAppMenu () {
-  console.log('process.platform', process.platform)
-  if (process.platform == 'win32') {
-    const template = [{
-      label: "File",
-        submenu:[ 
-          { label: "Save game.js", click: _ =>  downloadFile(gameScripts.get('game').url) },
-          { label: "Save zip.js", click: _ =>  downloadFile(gameScripts.get('zip').url) },
-          { label: "Save zip-ext.js", click: _ =>  downloadFile(gameScripts.get('zip-ext').url) },
-          { type: "separator" },
-          { label: "Quit", accelerator: "Alt+F4", click: _ => app.quit()}
-        ]}, {
-      label: "Settings",
-        submenu: [
-          { label: "unlimitedFrames", enabled: config.get('unlimitedFrames', false), click(){
-            let status = getStatus();
-            let options  = {buttons: ["Yes","No"],message: "Changing this will restart client continue?"};
-            let response = dialog.showMessageBox(mainWindow, options);
-            if (response == 0)  {
-                config.set("unlimitedFrames", status);
-                app.relaunch();
-                app.quit();
-            }} 
-        },
-         // { label: "Redo", accelerator: "Shift+CmdOrCtrl+Z", selector: "redo:" },
-        //  { type: "separator" },
-        //  { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
-         // { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
-         // { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
-         // { label: "Select All", accelerator: "CmdOrCtrl+A", selector: "selectAll:" }
-        ]}
-    ];
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-  }
+//https://zeke.github.io/electron.atom.io/docs/api/menu-item/
+function initAppMenu() {
+    console.log('process.platform', process.platform)
+    if (process.platform == 'win32') {
+        const template = [{
+                label: 'File',
+                submenu: [ // TYPES : normal, separator, submenu, checkbox or radio.
+                    {
+                        label: 'Save game.js',
+                        click: _ => downloadFile(gameScripts.get('game').url)
+                    },
+                    {
+                        label: "Save zip.js",
+                        click: _ => downloadFile(gameScripts.get('zip').url)
+                    },
+                    {
+                        label: "Save zip-ext.js",
+                        click: _ => downloadFile(gameScripts.get('zip-ext').url)
+                    },
+                    {
+                        type: "separator"
+                    },
+                    {
+                        label: "Quit",
+                        accelerator: "Alt+F4",
+                        click: _ => app.quit()
+                    },
+                    {
+                        type: "separator"
+                    }
+                ]
+            },
+
+            {
+                label: 'Settings',
+                submenu: [{
+                        type: 'checkbox',
+                        checked: config.get('unlimitedFrames', false),
+                        label: 'unlimitedFrames',
+                        click: _ => {
+                            dialog.showMessageBox(mainWindow, {
+                                buttons: ["Yes", "No"],
+                                message: "Changing this will restart client continue?"
+                            }, option => {
+                                if (option == 0) {
+                                    config.set("unlimitedFrames", !config.get('unlimitedFrames', false));
+                                    app.relaunch();
+                                    app.quit();
+                                }         
+                            })
+                        }
+                    },
+                    {
+                        type: 'checkbox',
+                        checked: false,
+                        label: 'Place Holder',
+                        click: _ => {
+                            console.log('')
+                            console.log('Place Holder is clicked')
+                        }
+                    },
+                    {
+                        type: 'checkbox',
+                        checked: false,
+                        label: 'Place Holder 2',
+                        click: _ => {
+                            console.log('')
+                            console.log('Place Holder 2 is clicked')
+                        }
+                    },
+                ]
+            },
+
+            {
+                label: 'View',
+                submenu: [{
+                        role: 'reload'
+                    },
+                    {
+                        role: 'toggledevtools'
+                    },
+                    {
+                        type: 'separator'
+                    },
+                    {
+                        role: 'resetzoom'
+                    },
+                    {
+                        role: 'zoomin'
+                    },
+                    {
+                        role: 'zoomout'
+                    },
+                    {
+                        type: 'separator'
+                    },
+                    {
+                        role: 'togglefullscreen'
+                    }
+                ]
+            },
+
+            {
+                role: 'window',
+                submenu: [{
+                        role: 'minimize'
+                    },
+                    {
+                        role: 'close'
+                    }
+                ]
+            },
+
+            {
+                role: 'help',
+                submenu: [{
+                    label: 'Learn More'
+                }]
+            }
+        ]
+        Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    }
 }
 
 // create main BrowserWindow
@@ -120,11 +208,19 @@ function createMainWindow() {
   });
 }
 
+const initNavListener = () => {
+    ipcMain.on('nav-response', (event, ret) => {
+       if (!ret) return;
+        const url = "https://krunker.io/" + ret;
+        gameWindow.loadURL(url, noCache);
+     });
+ }; initNavListener();
+
 function initShortcuts() {
   const KEY_BINDS = {
       escape: {
           key: 'Esc',
-          press: _ =>BrowserWindow.getFocusedWindow().webContents.send('esc')
+          press: _ => mainWindow.webContents.send('Esc')
           
       },
       quit: {
@@ -330,13 +426,29 @@ async function webRequest(configuration) {
   });
 }
 
-function downloadFile(source) 
-{
-  const filename = source.substring(source.lastIndexOf('/') +1 );
-  const options = { defaultPath: swapFolder + `/${filename}` }
-  dialog.showSaveDialog(null, options, dir => {
-    webRequest({remoteFile: source, localFile: dir, onProgress: function (received, total){ let percent = (received * 100) / total; console.log(percent + "% | " + received + " bytes out of " + total + " bytes.");} }).then(function(){ dialog.showMessageBox(null, {type: 'question',buttons: ['Ok'],message: 'Download Successful'});});
-  });
+function downloadFile(source) {
+    const filename = source.substring(source.lastIndexOf('/') + 1);
+    const options = {
+        defaultPath: swapFolder + `/${filename}`
+    }
+    dialog.showSaveDialog(mainWindow, options, choice => {
+        if (choice == 1) { // cancel, save
+            webRequest({
+                remoteFile: source,
+                localFile: dir,
+                onProgress: function(received, total) {
+                    let percent = (received * 100) / total;
+                    console.log(percent + "% | " + received + " bytes out of " + total + " bytes.");
+                }
+            }).then(function() {
+                dialog.showMessageBox(null, {
+                    type: 'question',
+                    buttons: ['Ok'],
+                    message: 'Download Successful'
+                });
+            });
+        }
+    })
 }
 
 function redirectScript(pattern, redirect) {
