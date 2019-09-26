@@ -1,6 +1,6 @@
 'use strict'
 // includes
-import { app, BrowserWindow, session, screen, Menu, dialog} from 'electron';
+import { app, BrowserWindow, session, screen, Menu, dialog } from 'electron';
 import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -56,15 +56,24 @@ function initAppMenu () {
           { type: "separator" },
           { label: "Quit", accelerator: "Alt+F4", click: _ => app.quit()}
         ]}, {
-      label: "Edit",
+      label: "Settings",
         submenu: [
-          { label: "Undo", accelerator: "CmdOrCtrl+Z", selector: "undo:" },
-          { label: "Redo", accelerator: "Shift+CmdOrCtrl+Z", selector: "redo:" },
-          { type: "separator" },
-          { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
-          { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
-          { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
-          { label: "Select All", accelerator: "CmdOrCtrl+A", selector: "selectAll:" }
+          { label: "unlimitedFrames", enabled: config.get('unlimitedFrames', false), click(){
+            let status = getStatus();
+            let options  = {buttons: ["Yes","No"],message: "Changing this will restart client continue?"};
+            let response = dialog.showMessageBox(mainWindow, options);
+            if (response == 0)  {
+                config.set("unlimitedFrames", status);
+                app.relaunch();
+                app.quit();
+            }} 
+        },
+         // { label: "Redo", accelerator: "Shift+CmdOrCtrl+Z", selector: "redo:" },
+        //  { type: "separator" },
+        //  { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
+         // { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
+         // { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
+         // { label: "Select All", accelerator: "CmdOrCtrl+A", selector: "selectAll:" }
         ]}
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -115,7 +124,8 @@ function initShortcuts() {
   const KEY_BINDS = {
       escape: {
           key: 'Esc',
-          press: _ => mainWindow.webContents.send('test','This is a test')//mainWindow.webContents.send('esc')
+          press: _ =>BrowserWindow.getFocusedWindow().webContents.send('esc')
+          
       },
       quit: {
           key: 'Alt+F4',
@@ -232,26 +242,28 @@ app.on('ready', () => {
         const response = await got('https://krunker.io/');
         const build = response.body.match(/(?<=build=)[^"]+/)[0];
         gameScripts.set('game', script_t('game.js', 'https://krunker.io/js/game*', `https://krunker.io/js/game.${build}.js`, ''));
+        // Disabled until Issue bellow is resolved
         //gameScripts.set('zip', script_t('zip.js', 'https://krunker.io/libs/zip.*', 'https://krunker.io/libs/zip.js', ''));
         //gameScripts.set('zip-ext', script_t('zip-ext.js', 'https://krunker.io/libs/zip-ext*', 'https://krunker.io/libs/zip-ext.js', ''));
 
         for (const [name, obj] of gameScripts) {
             const fullPath = path.join(swapFolder, obj.file);
+            //Synchronously
             try {
                   if (fs.existsSync(fullPath)) {
-                  //file exists
-                  redirectScript(obj.pattern, fullPath);
+                  redirectScript(obj.pattern, fullPath); // Issue here only the last of the container (if in swap dir) is redirected NFI why
                   }
             } catch(err) {
                   console.error(err)
             }
-
-
-            //fs.access(fullPath, (err) => {
-            //    if (err == null) {
-                 //   redirectScript(obj.pattern, fullPath);
-               // }
-          //  });
+            //Asynchronously
+            /*
+            fs.access(fullPath, (err) => {
+                if (err == null) {  //file exists
+                    redirectScript(obj.pattern, fullPath);
+                }
+            });
+            */
         }
         //Spoof user agent to regualar chrome
         session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -344,6 +356,22 @@ function redirectScript(pattern, redirect) {
     console.log(details);
     })
 }
+
+function loadScripts(dir) {
+    fs.readdir(dir, (err, files) => {
+        if (err) {
+          console.error("An error ocurred opening scripts directory" + err.message);
+          return;
+        } else {
+            files.forEach(file => {
+                if (file !== 'preload') {
+                    console.log(file);
+                    mainWindow.webContents.executeJavaScript(fs.readFileSync(dir + file, 'utf8'))
+                }
+            })
+        }
+    })
+  }
 
 function setSetting(t, e) {
   this.settings[t].val = e;
