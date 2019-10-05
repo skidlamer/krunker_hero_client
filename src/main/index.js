@@ -12,7 +12,6 @@ import * as shortcut from 'electron-localshortcut'
 import { format as formatUrl } from 'url'
 
 // global references
-var settings = [];
 const config = new store();
 const gameScripts = new Map();
 let mainWindow = null, swapFolder = '';
@@ -169,7 +168,7 @@ function initAppMenu() {
 }
 
 // create main BrowserWindow
-function createMainWindow() {
+const createMainWindow = () => {
   const display = screen.getPrimaryDisplay();
   const area = display.workArea;
   mainWindow = new BrowserWindow({
@@ -185,7 +184,7 @@ function createMainWindow() {
       }
   })
 
-  mainWindow.loadURL('https://krunker.io');
+  mainWindow.loadURL('https://krunker.io', noCache);
 
   mainWindow.once('ready-to-show', () => {
       if (isDev) mainWindow.webContents.openDevTools({
@@ -212,7 +211,7 @@ const initNavListener = () => {
     ipcMain.on('nav-response', (event, ret) => {
        if (!ret) return;
         const url = "https://krunker.io/" + ret;
-        gameWindow.loadURL(url, noCache);
+        mainWindow.loadURL(url, noCache);
      });
  }; initNavListener();
 
@@ -275,6 +274,11 @@ function initShortcuts() {
   });
 }
 
+app.once('before-quit', () => {
+    shortcut.unregisterAll();
+    mainWindow.close();
+});
+
 // quit application when all windows are closed
 app.on('window-all-closed', () => {
   // on macOS it is common for applications to stay open until the user explicitly quits
@@ -307,6 +311,46 @@ app.on('ready', () => {
             },
             files: {}
         };
+        
+        const response = await got('https://krunker.io/');
+        const build = response.body.match(/(?<=build=)[^"]+/)[0];
+        gameScripts.set('game', script_t('game.js', '*://krunker.io/js/game*', `https://krunker.io/js/game.${build}.js`, ''));
+        //gameScripts.set('zip', script_t('zip.js', '*://krunker.io/libs/zip.*', 'https://krunker.io/libs/zip.js', ''));
+        //gameScripts.set('zip-ext', script_t('zip-ext.js', '*://krunker.io/libs/zip-ext*', 'https://krunker.io/libs/zip-ext.js', ''));
+        for (const [name, obj] of gameScripts) {
+        const fullPath = path.join(swapFolder, obj.file);
+        try {
+            if (fs.existsSync(fullPath)) {
+
+                swap.filter.urls.push(obj.pattern);
+                swap.files[obj.pattern.replace(/\*/g, '')] = fullPath;
+
+                //redirectScript(obj.pattern, fullPath);
+
+               // swap.filter.url  *://krunker.io/css/fonts/font2.ttf*
+               // swap.files[ ://krunker.io/css/fonts/font2.ttf ]
+               // swap.file file:///C:\Users\Administrator\Documents\KrunkerResourceSwapper\css\fonts\font2.ttf
+             
+
+
+
+
+                //swap.files[obj.pattern.replace(/\*/g, '')] = fullPath;
+
+                //let krunk = '*://krunker.io' + fullPath.replace(swapFolder, '').replace(/\\/g, '/') + '*';
+              //          swap.filter.urls.push(krunk);
+              //          swap.files[krunk.replace(/\*/g, '')] = url.format({
+             //               pathname: filePath,
+             //               protocol: 'file:',
+              //              slashes: true
+             //           });
+                
+            }
+        } catch(err) {
+            console.error(err)
+        } 
+    }               
+        
         const allFilesSync = (dir, fileList = []) => {
             fs.readdirSync(dir).forEach(file => {
                 const filePath = path.join(dir, file);
@@ -315,12 +359,15 @@ app.on('ready', () => {
                 } else {
                     if (!file.includes('.js')) {
                         let krunk = '*://krunker.io' + filePath.replace(swapFolder, '').replace(/\\/g, '/') + '*';
-                        swap.filter.urls.push(krunk);
-                        swap.files[krunk.replace(/\*/g, '')] = url.format({
+                        swap.filter.urls.push(krunk); //console.log('swap.filter.url ', krunk);
+                        krunk = krunk.replace(/\*/g, '');
+                        //console.log('swap.files[',krunk,']');
+                        swap.files[krunk] = url.format({
                             pathname: filePath,
                             protocol: 'file:',
                             slashes: true
                         });
+                       // console.log('swap.file' , swap.files[krunk])
                     }
                 }
             });
@@ -328,30 +375,42 @@ app.on('ready', () => {
         allFilesSync(swapFolder);
         if (swap.filter.urls.length) {
             session.defaultSession.webRequest.onBeforeRequest(swap.filter, (details, callback) => {
+                let redirect = swap.files[details.url.replace(/https|http|(\?.*)|(#.*)/gi, '')] || details.url;
+                if (redirect.includes('.js')) {
+                    redirect = redirect.substring(0, redirect.lastIndexOf('.js') + 3) || redirect;
+                    redirect.replace(build, '') || redirect;
+                    console.warn(redirect);
+                }
+                
                 callback({
                     cancel: false,
-                    redirectURL: swap.files[details.url.replace(/https|http|(\?.*)|(#.*)/gi, '')] || details.url
+                    redirectURL: redirect
                 });
+
+                //const url = details.url.substring(0, details.url.lastIndexOf('.js') + 3) || details.url;
+                console.log('Redirecting ', details.url, 'to', redirectURL: swap.files[details.url.replace(/https|http|(\?.*)|(#.*)/gi, '')] || details.url);
+
+
+                //console.log('onBeforeRequest details', details);
             });
-            await wait(200);
         }
-        const response = await got('https://krunker.io/');
-        const build = response.body.match(/(?<=build=)[^"]+/)[0];
-        gameScripts.set('game', script_t('game.js', 'https://krunker.io/js/game*', `https://krunker.io/js/game.${build}.js`, ''));
+ //       const response = await got('https://krunker.io/');
+ //       const build = response.body.match(/(?<=build=)[^"]+/)[0];
+ //       gameScripts.set('game', script_t('game.js', 'https://krunker.io/js/game*', `https://krunker.io/js/game.${build}.js`, ''));
         // Disabled until Issue bellow is resolved
         //gameScripts.set('zip', script_t('zip.js', 'https://krunker.io/libs/zip.*', 'https://krunker.io/libs/zip.js', ''));
         //gameScripts.set('zip-ext', script_t('zip-ext.js', 'https://krunker.io/libs/zip-ext*', 'https://krunker.io/libs/zip-ext.js', ''));
 
-        for (const [name, obj] of gameScripts) {
-            const fullPath = path.join(swapFolder, obj.file);
+ //       for (const [name, obj] of gameScripts) {
+ //           const fullPath = path.join(swapFolder, obj.file);
             //Synchronously
-            try {
-                  if (fs.existsSync(fullPath)) {
-                  redirectScript(obj.pattern, fullPath); // Issue here only the last of the container (if in swap dir) is redirected NFI why
-                  }
-            } catch(err) {
-                  console.error(err)
-            }
+ //           try {
+  //                if (fs.existsSync(fullPath)) {
+  //                redirectScript(obj.pattern, fullPath); // Issue here only the last of the container (if in swap dir) is redirected NFI why
+  //                }
+  //          } catch(err) {
+  //                console.error(err)
+  //          }
             //Asynchronously
             /*
             fs.access(fullPath, (err) => {
@@ -360,7 +419,7 @@ app.on('ready', () => {
                 }
             });
             */
-        }
+ //       }
         //Spoof user agent to regualar chrome
         session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
             details.requestHeaders['User-Agent'] = noCache;
@@ -450,7 +509,7 @@ function downloadFile(source) {
         }
     })
 }
-
+/*
 function redirectScript(pattern, redirect) {
   session.defaultSession.webRequest.onBeforeRequest({
       urls: [pattern], 
@@ -468,12 +527,12 @@ function redirectScript(pattern, redirect) {
     console.log(details);
     })
 }
-
+*/
 function loadScripts(dir) {
     fs.readdir(dir, (err, files) => {
         if (err) {
-          console.error("An error ocurred opening scripts directory" + err.message);
-          return;
+            console.error("An error ocurred opening scripts directory" + err.message);
+            return;
         } else {
             files.forEach(file => {
                 if (file !== 'preload') {
@@ -483,17 +542,5 @@ function loadScripts(dir) {
             })
         }
     })
-  }
-
-function setSetting(t, e) {
-  this.settings[t].val = e;
-  config.set(`client_${t}`, e);
-  if (this.settings[t].set) this.settings[t].set(e);
 }
 
-function resetSettings() {
-  if (confirm("Are you sure you want to reset all your client settings? This will also refresh the page")) {
-      Object.keys(config.store).filter(x=>x.includes("client_")).forEach(x => config.remove(x));
-      location.reload();
-  }
-}
