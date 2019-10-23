@@ -1,27 +1,47 @@
 {
-  "name": "krunker.hero.desktop",
-  "version": "0.0.2",
-  "description": "A Thrid Party Desktop Client For Krunker",
-  "author": "SkidLamer",
-  "license": "MIT",
-  "scripts": {
-    "dev": "electron-webpack dev",
-    "compile": "electron-webpack",
-    "dist": "yarn compile && electron-builder",
-    "dist:dir": "yarn dist --dir -c.compression=store -c.mac.identity=null"
-  },
-  "dependencies": {
-    "electron-notify": "^0.1.0",
-    "got": "^9.6.0",
-    "request": "^2.88.0",
-    "source-map-support": "^0.5.12"
-  },
-  "devDependencies": {
-    "electron": "6.0.10",
-    "electron-builder": "^21.2.0",
-    "electron-webpack": "^2.7.4",
-    "electron-store": "^5.0.0",
-    "electron-localshortcut": "^3.1.0",
-    "webpack": "~4.35.3"
-  }
+    "name": "krunker.io.desktop",
+    "version": "1.6.8",
+    "description": "A Thrid Party Desktop Client For Krunker",
+    "author": "SkidLamer and Yendis Entertainment Pty Ltd",
+    "license": "MIT",
+    "main": "app/main.js",
+    "scripts": {
+        "start": "electron . --dev",
+        "dist": "electron-builder",
+        "pub": "electron-builder -p always",
+        "release": "electron-builder & publish"
+    },
+    "build": {
+        "appId": "krunker.io.client",
+        "productName": "Krunker.io Client",
+        "win": {
+            "publish": {
+                "provider": "generic",
+                "url": "http://github.com/skidlamer"
+            },
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64",
+                        "ia32"
+                    ]
+                }
+            ]
+        }
+    },
+    "dependencies": {
+        "discord-rpc": "^3.1.0",
+        "electron-localshortcut": "^3.1.0",
+        "electron-log": "^3.0.8",
+        "electron-store": "^5.0.0",
+        "electron-updater": "^4.1.2",
+        "request": "^2.88.0",
+        "rimraf": "^3.0.0",
+        "v8-compile-cache": "^2.1.0"
+    },
+    "devDependencies": {
+        "electron": "^6.0.11",
+        "electron-builder": "^21.2.0"
+    }
 }

@@ -1,2 +1,2 @@
-start "" "%PROGRAMFILES%\Git\bin\sh.exe" --login -c "yarn dev"
+start "" "%PROGRAMFILES%\Git\bin\sh.exe" --login -c "yarn start"
 exit
